@@ -45,6 +45,7 @@ export interface UserProgress {
     total: number;
     date: string;
     completed: boolean;
+    timeTaken?: number; // Time taken in seconds
   } | null;
   bookmarks: string[];
   highlights?: Highlight[];

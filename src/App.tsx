@@ -317,11 +317,41 @@ export default function App() {
   const activeChapter = chapters.find(c => c.id === activeChapterId) || chapters[0];
 
   // Quiz states
+  const QUIZ_DURATION = 300; // 5 minutes (300 seconds)
   const [quizStarted, setQuizStarted] = useState<boolean>(false);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState<number>(0);
   const [selectedAnswers, setSelectedAnswers] = useState<Record<string, number>>({});
   const [quizSubmitted, setQuizSubmitted] = useState<boolean>(false);
   const [tempQuizScore, setTempQuizScore] = useState<number>(0);
+  const [quizTimeLeft, setQuizTimeLeft] = useState<number>(QUIZ_DURATION);
+
+  // Reference to avoid stale closure in the timer interval callback
+  const selectedAnswersRef = useRef(selectedAnswers);
+  useEffect(() => {
+    selectedAnswersRef.current = selectedAnswers;
+  }, [selectedAnswers]);
+
+  const handleSubmitQuizRef = useRef<(forcedTimeLeft?: number) => void>(() => {});
+
+  // Countdown timer effect
+  useEffect(() => {
+    if (!quizStarted || quizSubmitted) return;
+
+    const interval = setInterval(() => {
+      setQuizTimeLeft(prev => {
+        if (prev <= 1) {
+          clearInterval(interval);
+          if (handleSubmitQuizRef.current) {
+            handleSubmitQuizRef.current(0);
+          }
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [quizStarted, quizSubmitted]);
 
   // Discussion input temp states
   const [tempAnswers, setTempAnswers] = useState<Record<string, string>>({});
@@ -830,29 +860,47 @@ export default function App() {
     }));
   };
 
+  // Start Quiz
+  const handleStartQuiz = () => {
+    setSelectedAnswers({});
+    setQuizSubmitted(false);
+    setQuizStarted(true);
+    setCurrentQuestionIndex(0);
+    setTempQuizScore(0);
+    setQuizTimeLeft(QUIZ_DURATION);
+  };
+
   // Submit Quiz
-  const handleSubmitQuiz = () => {
-    // Verify all questions are answered
-    const unanswered = quizQuestions.filter(q => selectedAnswers[q.id] === undefined);
-    if (unanswered.length > 0) {
-      if (!window.confirm(`អ្នកនៅសល់សំណួរចំនួន ${unanswered.length} ទៀតមិនទាន់ឆ្លើយ។ តើអ្នកចង់បញ្ជូនចម្លើយទាំងមិនទាន់រួចរាល់ឬ?`)) {
-        return;
+  const handleSubmitQuiz = (forcedTimeLeft?: number) => {
+    const currentAnswers = forcedTimeLeft === 0 ? selectedAnswersRef.current : selectedAnswers;
+
+    if (forcedTimeLeft !== 0) {
+      // Verify all questions are answered
+      const unanswered = quizQuestions.filter(q => currentAnswers[q.id] === undefined);
+      if (unanswered.length > 0) {
+        if (!window.confirm(`អ្នកនៅសល់សំណួរចំនួន ${unanswered.length} ទៀតមិនទាន់ឆ្លើយ។ តើអ្នកចង់បញ្ជូនចម្លើយទាំងមិនទាន់រួចរាល់ឬ?`)) {
+          return;
+        }
       }
     }
 
     // Calculate score
     let score = 0;
     quizQuestions.forEach(q => {
-      if (selectedAnswers[q.id] === q.correctIndex) {
+      if (currentAnswers[q.id] === q.correctIndex) {
         score++;
       }
     });
+
+    const secondsLeft = forcedTimeLeft !== undefined ? forcedTimeLeft : quizTimeLeft;
+    const elapsedSeconds = QUIZ_DURATION - secondsLeft;
 
     const quizResult = {
       score,
       total: quizQuestions.length,
       date: new Date().toLocaleDateString("km-KH", { year: 'numeric', month: 'long', day: 'numeric' }),
-      completed: true
+      completed: true,
+      timeTaken: elapsedSeconds
     };
 
     setTempQuizScore(score);
@@ -862,8 +910,17 @@ export default function App() {
       quizScores: quizResult
     }));
 
-    showToast(`តេស្តត្រូវបានបញ្ចប់! លទ្ធផល៖ ${score}/${quizQuestions.length} 🎉`);
+    if (forcedTimeLeft === 0) {
+      showToast(`អស់ម៉ោងហើយ! តេស្តត្រូវបានបញ្ជូនដោយស្វ័យប្រវត្តិ។ លទ្ធផល៖ ${score}/${quizQuestions.length} ⏱️`);
+    } else {
+      showToast(`តេស្តត្រូវបានបញ្ចប់! លទ្ធផល៖ ${score}/${quizQuestions.length} 🎉`);
+    }
   };
+
+  // Keep handleSubmitQuizRef updated
+  useEffect(() => {
+    handleSubmitQuizRef.current = handleSubmitQuiz;
+  }, [handleSubmitQuiz]);
 
   // Reset Quiz
   const handleResetQuiz = () => {
@@ -873,6 +930,7 @@ export default function App() {
       setQuizStarted(true);
       setCurrentQuestionIndex(0);
       setTempQuizScore(0);
+      setQuizTimeLeft(QUIZ_DURATION);
       setProgress(prev => ({
         ...prev,
         quizScores: null
@@ -2207,12 +2265,12 @@ export default function App() {
                   
                   <div className="bg-amber-50 dark:bg-amber-950/20 p-4 rounded-2xl border border-amber-200/50 dark:border-amber-900/40 text-left space-y-2 text-xs text-stone-600 dark:text-stone-300 font-medium leading-relaxed">
                     <p>• សំណួរត្រូវបានចម្រាញ់ចេញពីខ្លឹមសារស្នូលទាំង ៤ ជំពូក។</p>
-                    <p>• មិនមានកំណត់ពេលវេលាឡើយ អ្នកអាចពិចារណាបានច្បាស់លាស់។</p>
+                    <p>• មានកំណត់ពេលវេលាចំនួន <strong>៥ នាទី (៣០០ វិនាទី)</strong> ដើម្បីជាការប្រកួតប្រជែងសមត្ថភាព។ ⏱️</p>
                     <p>• រាល់ចម្លើយ និងលទ្ធផលនឹងត្រូវបង្ហាញការបកស្រាយលម្អិត។</p>
                   </div>
 
                   <button
-                    onClick={() => { setQuizStarted(true); }}
+                    onClick={handleStartQuiz}
                     className="bg-amber-800 hover:bg-amber-900 text-white font-bold text-sm px-8 py-3 rounded-2xl transition duration-150 inline-flex items-center gap-2 shadow-lg shadow-amber-800/10 cursor-pointer"
                   >
                     <Play className="w-4 h-4 fill-current" />
@@ -2232,6 +2290,55 @@ export default function App() {
                   <div className="w-full h-1.5 bg-stone-100 dark:bg-stone-800 rounded-full overflow-hidden">
                     <div className="h-full bg-amber-600 transition-all duration-300" style={{ width: `${((currentQuestionIndex + 1) / quizQuestions.length) * 100}%` }}></div>
                   </div>
+
+                  {/* Countdown Timer Widget */}
+                  {(() => {
+                    const formatQuizTime = (seconds: number) => {
+                      const mins = Math.floor(seconds / 60);
+                      const secs = seconds % 60;
+                      return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
+                    };
+                    const timeLeftPercent = (quizTimeLeft / QUIZ_DURATION) * 100;
+                    return (
+                      <div className="space-y-3">
+                        <div className={`p-4 rounded-2xl border flex items-center justify-between transition-all duration-300 ${
+                          quizTimeLeft <= 60
+                            ? "bg-rose-50 dark:bg-rose-950/20 border-rose-300 dark:border-rose-900/50 text-rose-800 dark:text-rose-400 animate-pulse"
+                            : "bg-amber-50/50 dark:bg-amber-950/10 border-amber-200/50 dark:border-amber-900/30 text-amber-950 dark:text-amber-200"
+                        }`}>
+                          <div className="flex items-center gap-2.5">
+                            <div className={`p-2 rounded-xl flex items-center justify-center shrink-0 ${
+                              quizTimeLeft <= 60 ? "bg-rose-500 text-white" : "bg-amber-700 text-white"
+                            }`}>
+                              <Clock className={`w-4 h-4 ${quizTimeLeft <= 60 ? "animate-pulse" : ""}`} />
+                            </div>
+                            <div className="text-left">
+                              <span className="text-[10px] font-bold block uppercase tracking-wider opacity-70">
+                                {quizTimeLeft <= 60 ? "ពេលវេលាជិតអស់ហើយ!" : "ពេលវេលានៅសល់ (Timer)"}
+                              </span>
+                              <span className="text-[10.5px] font-semibold leading-none opacity-80 block mt-0.5">
+                                {quizTimeLeft <= 60 ? "សូមរួសរាន់ឡើងមុនពេលប្រព័ន្ធបញ្ជូនស្វ័យប្រវត្តិ" : "សូមឆ្លើយសំណួរឱ្យបានមុនពេលកំណត់"}
+                              </span>
+                            </div>
+                          </div>
+                          
+                          <div className="text-right">
+                            <span className="font-mono text-xl sm:text-2xl font-black block tracking-tight leading-none">
+                              {formatQuizTime(quizTimeLeft)}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="w-full h-1 bg-stone-100 dark:bg-stone-800 rounded-full overflow-hidden">
+                          <div 
+                            className={`h-full transition-all duration-1000 ${
+                              quizTimeLeft <= 60 ? "bg-rose-500" : "bg-amber-600"
+                            }`} 
+                            style={{ width: `${timeLeftPercent}%` }}
+                          ></div>
+                        </div>
+                      </div>
+                    );
+                  })()}
 
                   {/* Question Box */}
                   <div className="bg-stone-50 dark:bg-stone-950 border border-stone-200 dark:border-stone-800 p-5 rounded-2xl">
@@ -2316,6 +2423,15 @@ export default function App() {
                     const passPercent = Math.round((finalScore / finalTotal) * 100);
                     const isPassed = passPercent >= 70;
 
+                    const formatSecondsToKhmer = (secondsTotal: number) => {
+                      const mins = Math.floor(secondsTotal / 60);
+                      const secs = secondsTotal % 60;
+                      if (mins === 0) {
+                        return `${secs} វិនាទី`;
+                      }
+                      return `${mins} នាទី ${secs} វិនាទី`;
+                    };
+
                     return (
                       <div className="text-center py-6">
                         
@@ -2359,7 +2475,7 @@ export default function App() {
                               <p className="text-xs sm:text-sm text-stone-600 dark:text-stone-300 max-w-md mx-auto leading-[1.8] font-medium relative z-10">
                                 បានបញ្ចប់ដោយជោគជ័យនូវការសិក្សាសៀវភៅឌីជីថលអន្តរកម្មស្តីពី <br />
                                 <strong className="text-stone-950 dark:text-white text-sm sm:text-base">«យុទ្ធសាស្ត្រសម្រាប់ការគ្រប់គ្រង និងដឹកនាំបុគ្គលិក»</strong> <br />
-                                និងទទួលបានពិន្ទុតេស្តយ៉ាងគាប់ប្រសើរចំនួន <strong className="text-amber-800 dark:text-amber-400">{finalScore} លើ {finalTotal} ({passPercent}%)</strong>។
+                                និងទទួលបានពិន្ទុតេស្តយ៉ាងគាប់ប្រសើរចំនួន <strong className="text-amber-800 dark:text-amber-400">{finalScore} លើ {finalTotal} ({passPercent}%)</strong> ក្នុងរយៈពេល <strong className="text-amber-800 dark:text-amber-400">{formatSecondsToKhmer(progress.quizScores?.timeTaken ?? (QUIZ_DURATION - quizTimeLeft))}</strong>។
                               </p>
 
                               {/* Signatures & Golden Rosette Seal */}
@@ -2444,7 +2560,7 @@ export default function App() {
                             </div>
                             <h3 className="font-bold text-red-950 dark:text-red-300 text-base">ការធ្វើតេស្តមិនទាន់ឆ្លងកាត់</h3>
                             <p className="text-xs text-red-900/80 dark:text-red-400 leading-relaxed font-medium">
-                              លទ្ធផលរបស់លោកអ្នកគឺ <strong>{finalScore} លើ {finalTotal} ({passPercent}%)</strong>។ លោកអ្នកត្រូវឆ្លើយឱ្យបានត្រឹមត្រូវយ៉ាងតិច <strong>៧០%</strong> ដើម្បីអាចទទួលបានវិញ្ញាបនបត្រឌីជីថល។ កុំបារម្ភ! លោកអ្នកអាចអានមេរៀនឡើងវិញ និងសាកល្បងសារជាថ្មី។
+                              លទ្ធផលរបស់លោកអ្នកគឺ <strong>{finalScore} លើ {finalTotal} ({passPercent}%)</strong> ក្នុងរយៈពេល <strong>{formatSecondsToKhmer(progress.quizScores?.timeTaken ?? (QUIZ_DURATION - quizTimeLeft))}</strong>។ លោកអ្នកត្រូវឆ្លើយឱ្យបានត្រឹមត្រូវយ៉ាងតិច <strong>៧០%</strong> ដើម្បីអាចទទួលបានវិញ្ញាបនបត្រឌីជីថល។ កុំបារម្ភ! លោកអ្នកអាចអានមេរៀនឡើងវិញ និងសាកល្បងសារជាថ្មី។
                             </p>
                           </div>
                         )}
@@ -2924,6 +3040,15 @@ export default function App() {
                 }`}>
                   {progress.quizScores ? (progress.quizScores.score / progress.quizScores.total >= 0.7 ? "ជាប់ជោគជ័យ ✓" : "មិនទាន់ជាប់") : "មិនទាន់ធ្វើតេស្ត"}
                 </span>
+                {progress.quizScores && progress.quizScores.timeTaken !== undefined && (
+                  <span className="text-[10px] text-stone-400 dark:text-stone-500 block mt-2 font-semibold">
+                    រយៈពេល៖ {(() => {
+                      const mins = Math.floor(progress.quizScores.timeTaken / 60);
+                      const secs = progress.quizScores.timeTaken % 60;
+                      return mins === 0 ? `${secs} វិនាទី` : `${mins} នាទី ${secs} វិនាទី`;
+                    })()}
+                  </span>
+                )}
               </div>
 
             </div>

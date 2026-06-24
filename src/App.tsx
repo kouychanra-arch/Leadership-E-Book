@@ -34,11 +34,33 @@ import {
   Play,
   Clock,
   Sun,
-  Moon
+  Moon,
+  Highlighter,
+  Trash2,
+  Download,
+  FileDown,
+  Shield,
+  Database,
+  Upload,
+  TrendingUp,
+  Bot,
+  Mic
 } from "lucide-react";
 import { chapters, quizQuestions, bookIntro } from "./data";
-import { Chapter, QuizQuestion, UserProgress } from "./types";
+import { Chapter, QuizQuestion, UserProgress, Highlight } from "./types";
 import { motion, AnimatePresence } from "motion/react";
+import { downloadChapterPDF, downloadFullBookPDF } from "./pdfUtils";
+import {
+  ResponsiveContainer,
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ReferenceLine
+} from "recharts";
 
 export default function App() {
   // Theme state
@@ -58,6 +80,201 @@ export default function App() {
   // Navigation states
   const [currentTab, setCurrentTab] = useState<"home" | "chapters" | "quiz" | "progress" | "cases">("home");
   const [activeChapterId, setActiveChapterId] = useState<string>("cross-functional-synergy");
+  
+  // AI Coach and Audio Transcription States
+  const [chatOpen, setChatOpen] = useState<boolean>(false);
+  const [chatMessages, setChatMessages] = useState<Array<{ role: "user" | "model"; text: string; timestamp: string }>>([
+    {
+      role: "model",
+      text: "សួស្តី! ខ្ញុំជា **គ្រូបង្វឹកដឹកនាំ (AI Leadership Coach)**។ ខ្ញុំនៅទីនេះដើម្បីជួយសម្រួលដល់ការសិក្សារបស់លោកអ្នកលើសៀវភៅ «យុទ្ធសាស្ត្រដឹកនាំបុគ្គលិក»។\n\nតើលោកអ្នកមានសំណួរ ឬចង់ពិភាក្សាអំពីជំពូកណាមួយដែរឬទេ? លោកអ្នកក៏អាច**និយាយជាសំឡេង**ដោយចុចលើរូបមីក្រូហ្វូន ដើម្បីបម្លែងសំឡេងទៅជាអក្សរបានផងដែរ! ✍️🎙️",
+      timestamp: new Date().toLocaleTimeString("km-KH", { hour: '2-digit', minute: '2-digit' })
+    }
+  ]);
+  const [chatInput, setChatInput] = useState<string>("");
+  const [chatLoading, setChatLoading] = useState<boolean>(false);
+  const [isRecording, setIsRecording] = useState<boolean>(false);
+  const [recorder, setRecorder] = useState<MediaRecorder | null>(null);
+  const [transcribing, setTranscribing] = useState<boolean>(false);
+  const chatEndRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (chatOpen) {
+      setTimeout(() => {
+        chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+      }, 80);
+    }
+  }, [chatMessages, chatOpen]);
+
+  // Audio Recording & Transcription handlers
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaRecorder = new MediaRecorder(stream);
+      const audioChunks: Blob[] = [];
+
+      mediaRecorder.ondataavailable = (event) => {
+        audioChunks.push(event.data);
+      };
+
+      mediaRecorder.onstop = async () => {
+        const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+        const reader = new FileReader();
+        reader.readAsDataURL(audioBlob);
+        reader.onloadend = async () => {
+          const base64Data = (reader.result as string).split(',')[1];
+          await handleTranscribe(base64Data);
+        };
+        
+        // Stop all tracks to release the microphone device
+        stream.getTracks().forEach(track => track.stop());
+      };
+
+      setRecorder(mediaRecorder);
+      mediaRecorder.start();
+      setIsRecording(true);
+      showToast("កំពុងថតសំឡេងនិយាយ... 🎙️");
+    } catch (err) {
+      console.error("Error accessing microphone:", err);
+      showToast("មិនអាចប្រើប្រាស់មីក្រូហ្វូនបានឡើយ! សូមពិនិត្យការអនុញ្ញាត។ ❌");
+    }
+  };
+
+  const stopRecording = () => {
+    if (recorder && isRecording) {
+      recorder.stop();
+      setIsRecording(false);
+      showToast("កំពុងបម្លែងសំឡេងទៅជាអក្សរ... 🔄");
+    }
+  };
+
+  const handleTranscribe = async (base64Audio: string) => {
+    setTranscribing(true);
+    try {
+      const res = await fetch("/api/transcribe", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ audioData: base64Audio, mimeType: "audio/wav" })
+      });
+      const data = await res.json();
+      if (data.text) {
+        setChatInput(prev => prev ? prev + " " + data.text : data.text);
+        showToast("ការបម្លែងសំឡេងទទួលបានជោគជ័យ! ✨");
+      } else if (data.error) {
+        showToast(`ការបម្លែងមានកំហុស៖ ${data.error}`);
+      }
+    } catch (err) {
+      console.error("Transcription error:", err);
+      showToast("ការបម្លែងសំឡេងបានបរាជ័យ! ❌");
+    } finally {
+      setTranscribing(false);
+    }
+  };
+
+  // Chat Submission handler
+  const handleSendChatMessage = async () => {
+    if (!chatInput.trim() || chatLoading) return;
+    const userText = chatInput.trim();
+    setChatInput("");
+
+    const newMessages = [
+      ...chatMessages,
+      {
+        role: "user" as const,
+        text: userText,
+        timestamp: new Date().toLocaleTimeString("km-KH", { hour: '2-digit', minute: '2-digit' })
+      }
+    ];
+    setChatMessages(newMessages);
+    setChatLoading(true);
+
+    try {
+      const formattedContents = newMessages.map(msg => ({
+        role: msg.role === "user" ? "user" : "model",
+        parts: [{ text: msg.text }]
+      }));
+
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contents: formattedContents })
+      });
+
+      const data = await res.json();
+      if (data.text) {
+        setChatMessages(prev => [
+          ...prev,
+          {
+            role: "model" as const,
+            text: data.text,
+            timestamp: new Date().toLocaleTimeString("km-KH", { hour: '2-digit', minute: '2-digit' })
+          }
+        ]);
+      } else if (data.error) {
+        setChatMessages(prev => [
+          ...prev,
+          {
+            role: "model" as const,
+            text: `⚠️ មានបញ្ហា៖ ${data.error}`,
+            timestamp: new Date().toLocaleTimeString("km-KH", { hour: '2-digit', minute: '2-digit' })
+          }
+        ]);
+      }
+    } catch (err) {
+      console.error("Chat error:", err);
+      setChatMessages(prev => [
+        ...prev,
+        {
+          role: "model" as const,
+          text: "❌ មិនអាចភ្ជាប់ទៅកាន់ម៉ាស៊ីនមេបានឡើយ។ សូមព្យាយាមម្តងទៀត!",
+          timestamp: new Date().toLocaleTimeString("km-KH", { hour: '2-digit', minute: '2-digit' })
+        }
+      ]);
+    } finally {
+      setChatLoading(false);
+    }
+  };
+
+  // Custom text formatter for chatbot responses
+  const formatMessageText = (text: string) => {
+    return text.split("\n").map((line, index) => {
+      const parts: React.ReactNode[] = [];
+      let currentLine = line;
+      const boldRegex = /\*\*(.*?)\*\*/g;
+      let match;
+      let lastIndex = 0;
+
+      let isBullet = false;
+      if (currentLine.startsWith("* ") || currentLine.startsWith("- ")) {
+        isBullet = true;
+        currentLine = currentLine.substring(2);
+      }
+
+      while ((match = boldRegex.exec(currentLine)) !== null) {
+        if (match.index > lastIndex) {
+          parts.push(currentLine.substring(lastIndex, match.index));
+        }
+        parts.push(<strong key={match.index} className="font-extrabold text-stone-900 dark:text-stone-100">{match[1]}</strong>);
+        lastIndex = boldRegex.lastIndex;
+      }
+      if (lastIndex < currentLine.length) {
+        parts.push(currentLine.substring(lastIndex));
+      }
+
+      if (isBullet) {
+        return (
+          <li key={index} className="ml-4 list-disc pl-1 text-[13px] leading-relaxed mt-1 text-stone-700 dark:text-stone-300">
+            {parts.length > 0 ? parts : currentLine}
+          </li>
+        );
+      }
+
+      return (
+        <p key={index} className="text-[13px] leading-relaxed mt-1 text-stone-700 dark:text-stone-300 min-h-[1rem]">
+          {parts.length > 0 ? parts : currentLine}
+        </p>
+      );
+    });
+  };
   const [quickJumpOpen, setQuickJumpOpen] = useState<boolean>(false);
   const quickJumpRef = useRef<HTMLDivElement>(null);
   const [activeCaseIndex, setActiveCaseIndex] = useState<number>(0);
@@ -75,7 +292,14 @@ export default function App() {
     const saved = localStorage.getItem("ldr_user_progress");
     if (saved) {
       try {
-        return JSON.parse(saved);
+        const parsed = JSON.parse(saved);
+        return {
+          completedChapters: parsed.completedChapters || [],
+          discussionAnswers: parsed.discussionAnswers || {},
+          quizScores: parsed.quizScores || null,
+          bookmarks: parsed.bookmarks || [],
+          highlights: parsed.highlights || []
+        };
       } catch (e) {
         // Fallback
       }
@@ -84,7 +308,8 @@ export default function App() {
       completedChapters: [],
       discussionAnswers: {},
       quizScores: null,
-      bookmarks: []
+      bookmarks: [],
+      highlights: []
     };
   });
 
@@ -126,6 +351,275 @@ export default function App() {
       document.removeEventListener("mousedown", handleClickOutside);
     };
   }, []);
+
+  // PDF download dropdown state
+  const [showPdfDropdown, setShowPdfDropdown] = useState<boolean>(false);
+  const pdfDropdownRef = useRef<HTMLDivElement>(null);
+
+  // Click outside listener for PDF download dropdown
+  useEffect(() => {
+    const handleClickOutsidePdf = (event: MouseEvent) => {
+      if (pdfDropdownRef.current && !pdfDropdownRef.current.contains(event.target as Node)) {
+        setShowPdfDropdown(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutsidePdf);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutsidePdf);
+    };
+  }, []);
+
+  // Text Highlight States
+  const [selectedText, setSelectedText] = useState<string>("");
+  const [selectionCoords, setSelectionCoords] = useState<{ x: number; y: number } | null>(null);
+  const [showHighlightMenu, setShowHighlightMenu] = useState<boolean>(false);
+  const [highlightColor, setHighlightColor] = useState<"yellow" | "cyan" | "emerald" | "pink">("yellow");
+  const [highlightNote, setHighlightNote] = useState<string>("");
+  const highlightMenuRef = useRef<HTMLDivElement>(null);
+
+  // Click outside listener for highlight menu
+  useEffect(() => {
+    const handleClickOutsideHighlight = (event: MouseEvent) => {
+      if (
+        highlightMenuRef.current &&
+        !highlightMenuRef.current.contains(event.target as Node)
+      ) {
+        const sel = window.getSelection();
+        if (!sel || sel.toString().trim().length === 0) {
+          setShowHighlightMenu(false);
+          setSelectedText("");
+          setSelectionCoords(null);
+          setHighlightNote("");
+        }
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutsideHighlight);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutsideHighlight);
+    };
+  }, []);
+
+  const handleTextSelection = () => {
+    setTimeout(() => {
+      const sel = window.getSelection();
+      if (!sel) return;
+      
+      const text = sel.toString().trim();
+      if (text.length > 2) {
+        const articleEl = document.getElementById("reading-article");
+        if (articleEl && sel.anchorNode && articleEl.contains(sel.anchorNode)) {
+          try {
+            const range = sel.getRangeAt(0);
+            const rect = range.getBoundingClientRect();
+            const containerRect = articleEl.getBoundingClientRect();
+            
+            let xPos = rect.left - containerRect.left + rect.width / 2;
+            let yPos = rect.top - containerRect.top - 60; // offset above the text
+            
+            if (xPos < 140) xPos = 140;
+            if (xPos > containerRect.width - 140) xPos = containerRect.width - 140;
+            if (yPos < 0) yPos = 10;
+            
+            setSelectionCoords({ x: xPos, y: yPos });
+            setSelectedText(text);
+            setShowHighlightMenu(true);
+          } catch (e) {
+            // Ignore range errors
+          }
+        }
+      }
+    }, 50);
+  };
+
+  const handleSaveHighlight = () => {
+    if (!selectedText) return;
+    
+    const isDup = (progress.highlights || []).some(
+      h => h.chapterId === activeChapter.id && h.text === selectedText
+    );
+    
+    if (isDup) {
+      showToast("អត្ថបទនេះត្រូវបានគូសចំណាំរួចហើយ! ⚠️");
+      setShowHighlightMenu(false);
+      window.getSelection()?.removeAllRanges();
+      return;
+    }
+
+    const newHighlight: Highlight = {
+      id: Math.random().toString(36).substring(2, 9),
+      chapterId: activeChapter.id,
+      chapterTitle: activeChapter.title,
+      chapterNumber: activeChapter.number,
+      text: selectedText,
+      color: highlightColor,
+      note: highlightNote.trim() || undefined,
+      date: new Date().toLocaleDateString("km-KH", {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+      })
+    };
+
+    const updatedHighlights = [...(progress.highlights || []), newHighlight];
+    setProgress({
+      ...progress,
+      highlights: updatedHighlights
+    });
+
+    showToast("បានរក្សាទុកចំណាំព័ណ៌ដោយជោគជ័យ! 🎨✍️");
+    
+    setShowHighlightMenu(false);
+    setSelectedText("");
+    setHighlightNote("");
+    setSelectionCoords(null);
+    window.getSelection()?.removeAllRanges();
+  };
+
+  const handleDeleteHighlight = (id: string) => {
+    const updatedHighlights = (progress.highlights || []).filter(h => h.id !== id);
+    setProgress({
+      ...progress,
+      highlights: updatedHighlights
+    });
+    showToast("បានលុបចំណាំព័ណ៌រួចរាល់! 🗑️");
+  };
+
+  // Export User Progress to JSON backup
+  const handleExportBackup = () => {
+    try {
+      const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify({
+        progress,
+        userName
+      }, null, 2));
+      const downloadAnchor = document.createElement('a');
+      downloadAnchor.setAttribute("href", dataStr);
+      downloadAnchor.setAttribute("download", `យុទ្ធសាស្ត្រដឹកនាំបុគ្គលិក_ទិន្នន័យសិក្សាបម្រុង_${userName || "សមាជិក"}.json`);
+      document.body.appendChild(downloadAnchor);
+      downloadAnchor.click();
+      downloadAnchor.remove();
+      showToast("បានទាញយកទិន្នន័យបម្រុងទុកដោយជោគជ័យ! 💾📥");
+    } catch (e) {
+      console.error(e);
+      showToast("មានបញ្ហាក្នុងការទាញយកទិន្នន័យបម្រុងទុក! ❌");
+    }
+  };
+
+  // Import User Progress from JSON backup
+  const handleImportBackup = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const fileReader = new FileReader();
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    fileReader.onload = (event) => {
+      try {
+        const parsed = JSON.parse(event.target?.result as string);
+        if (parsed && (parsed.progress || parsed.completedChapters)) {
+          // It's a valid backup file
+          const importedProgress = parsed.progress || parsed;
+          const importedName = parsed.userName || "";
+
+          setProgress({
+            completedChapters: importedProgress.completedChapters || [],
+            discussionAnswers: importedProgress.discussionAnswers || {},
+            quizScores: importedProgress.quizScores !== undefined ? importedProgress.quizScores : null,
+            bookmarks: importedProgress.bookmarks || [],
+            highlights: importedProgress.highlights || []
+          });
+
+          if (importedName) {
+            setUserName(importedName);
+            localStorage.setItem("ldr_user_name", importedName);
+          }
+
+          showToast("បានបញ្ចូល និងស្តារទិន្នន័យសិក្សាឡើងវិញដោយជោគជ័យ! 📂🔄");
+        } else {
+          showToast("ទម្រង់ឯកសារមិនត្រឹមត្រូវឡើយ! ❌");
+        }
+      } catch (err) {
+        console.error(err);
+        showToast("ការអានឯកសារបរាជ័យ ឬខូចទម្រង់! ❌");
+      }
+    };
+    fileReader.readAsText(file);
+    // Reset target value so user can upload same file again
+    e.target.value = "";
+  };
+
+  // Clear/Reset entire study progress
+  const handleClearAllData = () => {
+    if (window.confirm("🚨 ប្រយ័ត្ន៖ តើលោកអ្នកពិតជាចង់លុបទិន្នន័យសិក្សាទាំងអស់ (ចំណាំ ទំព័រអានចុងក្រោយ និងពិន្ទុ) មែនទេ? សកម្មភាពនេះមិនអាចត្រឡប់ថយក្រោយវិញបានឡើយ!")) {
+      const defaultProgress: UserProgress = {
+        completedChapters: [],
+        discussionAnswers: {},
+        quizScores: null,
+        bookmarks: [],
+        highlights: []
+      };
+      setProgress(defaultProgress);
+      localStorage.setItem("ldr_user_progress", JSON.stringify(defaultProgress));
+      setUserName("");
+      setInputName("");
+      localStorage.removeItem("ldr_user_name");
+      showToast("បានសំអាតទិន្នន័យសិក្សាទាំងអស់ដោយជោគជ័យ! 🗑️✨");
+    }
+  };
+
+  // Helper to render paragraph with inline highlights applied
+  const renderParagraphWithHighlights = (paragraph: string, chapterId: string) => {
+    const chapterHighlights = (progress.highlights || []).filter(h => h.chapterId === chapterId);
+    if (chapterHighlights.length === 0) return paragraph;
+
+    const activeMatches = chapterHighlights.filter(h => paragraph.includes(h.text));
+    if (activeMatches.length === 0) return paragraph;
+
+    const sortedMatches = [...activeMatches].sort((a, b) => {
+      return paragraph.indexOf(a.text) - paragraph.indexOf(b.text);
+    });
+
+    const elements: React.ReactNode[] = [];
+    let currentIndex = 0;
+
+    for (const match of sortedMatches) {
+      const startIndex = paragraph.indexOf(match.text, currentIndex);
+      if (startIndex < currentIndex) continue;
+
+      if (startIndex > currentIndex) {
+        elements.push(paragraph.substring(currentIndex, startIndex));
+      }
+
+      let highlightClass = "bg-amber-100/80 dark:bg-amber-900/40 text-amber-950 dark:text-amber-200 border-b border-amber-400";
+      if (match.color === "cyan") {
+        highlightClass = "bg-sky-100/80 dark:bg-sky-900/40 text-sky-950 dark:text-sky-200 border-b border-sky-400";
+      } else if (match.color === "emerald") {
+        highlightClass = "bg-emerald-100/80 dark:bg-emerald-900/40 text-emerald-950 dark:text-emerald-200 border-b border-emerald-400";
+      } else if (match.color === "pink") {
+        highlightClass = "bg-rose-100/80 dark:bg-rose-900/40 text-rose-950 dark:text-rose-200 border-b border-rose-400";
+      }
+
+      elements.push(
+        <span
+          key={match.id}
+          className={`${highlightClass} px-1 rounded cursor-help relative group transition-all duration-200 hover:brightness-105 inline`}
+          title={match.note ? `ចំណាំ៖ ${match.note}` : "ចំណាំព័ណ៌ (Highlight)"}
+        >
+          {match.text}
+          {match.note && (
+            <span className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 w-48 bg-stone-900 text-stone-100 text-[10px] py-1.5 px-2.5 rounded-xl shadow-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-30 leading-normal font-medium text-center border border-stone-800">
+              {match.note}
+            </span>
+          )}
+        </span>
+      );
+
+      currentIndex = startIndex + match.text.length;
+    }
+
+    if (currentIndex < paragraph.length) {
+      elements.push(paragraph.substring(currentIndex));
+    }
+
+    return <>{elements}</>;
+  };
 
   // Helper classes for font size changes
   const getParaFontSizeClass = () => {
@@ -1220,7 +1714,7 @@ export default function App() {
             </aside>
 
             {/* Main Reading Canvas */}
-            <article className="flex-1 bg-white dark:bg-stone-900 border border-stone-200/80 dark:border-stone-800 rounded-3xl shadow-sm overflow-hidden transition-colors duration-300">
+            <article id="reading-article" onMouseUp={handleTextSelection} onKeyUp={handleTextSelection} className="flex-1 bg-white dark:bg-stone-900 border border-stone-200/80 dark:border-stone-800 rounded-3xl shadow-sm overflow-hidden transition-colors duration-300 relative">
               <AnimatePresence mode="wait">
                 <motion.div
                   key={activeChapter.id}
@@ -1246,6 +1740,51 @@ export default function App() {
                     
                     {/* Action panel for page reading (Bookmark, Complete) */}
                     <div className="flex items-center gap-2">
+                      {/* PDF Download Dropdown */}
+                      <div className="relative" ref={pdfDropdownRef}>
+                        <button
+                          onClick={() => setShowPdfDropdown(!showPdfDropdown)}
+                          className="px-3 py-2 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 text-stone-300 hover:text-white text-xs font-bold transition flex items-center gap-1.5 cursor-pointer"
+                          title="ទាញយកជា PDF"
+                        >
+                          <Download className="w-4 h-4 text-amber-400 animate-pulse" />
+                          <span>ទាញយក PDF</span>
+                          <ChevronDown className="w-3 h-3 opacity-60" />
+                        </button>
+
+                        <AnimatePresence>
+                          {showPdfDropdown && (
+                            <motion.div
+                              initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                              animate={{ opacity: 1, y: 0, scale: 1 }}
+                              exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                              className="absolute right-0 mt-2 w-56 bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-850 rounded-xl shadow-xl py-1.5 z-50 text-left"
+                            >
+                              <button
+                                onClick={async () => {
+                                  setShowPdfDropdown(false);
+                                  await downloadChapterPDF(activeChapter, showToast);
+                                }}
+                                className="w-full text-left px-4 py-2.5 text-xs text-stone-750 dark:text-stone-300 hover:bg-amber-50 dark:hover:bg-amber-950/40 hover:text-amber-900 dark:hover:text-amber-200 font-bold transition flex items-center gap-2 cursor-pointer"
+                              >
+                                <FileDown className="w-4 h-4 text-amber-700 dark:text-amber-400" />
+                                <span>ទាញយកជំពូកបច្ចុប្បន្ន</span>
+                              </button>
+                              <button
+                                onClick={async () => {
+                                  setShowPdfDropdown(false);
+                                  await downloadFullBookPDF(chapters, bookIntro, showToast);
+                                }}
+                                className="w-full text-left px-4 py-2.5 text-xs text-stone-750 dark:text-stone-300 hover:bg-amber-50 dark:hover:bg-amber-950/40 hover:text-amber-900 dark:hover:text-amber-200 font-bold transition border-t border-stone-100 dark:border-stone-850/60 flex items-center gap-2 cursor-pointer"
+                              >
+                                <Download className="w-4 h-4 text-amber-700 dark:text-amber-400" />
+                                <span>ទាញយកសៀវភៅទាំងមូល</span>
+                              </button>
+                            </motion.div>
+                          )}
+                        </AnimatePresence>
+                      </div>
+
                       <button
                         onClick={() => handleToggleBookmark(activeChapter.id)}
                         className={`p-2 rounded-xl border transition ${
@@ -1328,7 +1867,7 @@ export default function App() {
                 
                 {/* Brief intro note */}
                 <div className={`bg-amber-50/50 dark:bg-amber-950/20 border border-amber-200/50 dark:border-amber-900/40 rounded-2xl p-4 mb-8 text-stone-600 dark:text-stone-300 leading-relaxed font-medium transition-all duration-200 ${getParaFontSizeClass()}`}>
-                  {activeChapter.description}
+                  {renderParagraphWithHighlights(activeChapter.description, activeChapter.id)}
                 </div>
 
                 {/* Subsections Content */}
@@ -1346,13 +1885,13 @@ export default function App() {
                           if (paragraph.startsWith("•") || paragraph.startsWith("-")) {
                             return (
                               <p key={pIdx} className="pl-4 sm:pl-6 text-stone-700 dark:text-stone-300 border-l-2 border-amber-500/30 dark:border-amber-500/50">
-                                {paragraph}
+                                {renderParagraphWithHighlights(paragraph, activeChapter.id)}
                               </p>
                             );
                           }
                           return (
                             <p key={pIdx} className="indent-4 sm:indent-6">
-                              {paragraph}
+                              {renderParagraphWithHighlights(paragraph, activeChapter.id)}
                             </p>
                           );
                         })}
@@ -1520,6 +2059,87 @@ export default function App() {
 
               </div>
             </motion.div>
+          </AnimatePresence>
+
+          {/* Floating Highlight Tooltip Menu */}
+          <AnimatePresence>
+            {showHighlightMenu && selectionCoords && (
+              <motion.div
+                ref={highlightMenuRef}
+                initial={{ opacity: 0, scale: 0.85, y: 10 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.85, y: 10 }}
+                className="absolute bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-850 shadow-[0_20px_50px_rgba(0,0,0,0.15)] rounded-2xl p-3 z-40 w-72 flex flex-col gap-2.5 pointer-events-auto"
+                style={{
+                  left: `${selectionCoords.x}px`,
+                  top: `${selectionCoords.y}px`,
+                  transform: "translateX(-50%)",
+                }}
+              >
+                {/* Heading */}
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-black text-amber-800 dark:text-amber-400 uppercase tracking-wide">
+                    បង្កើតចំណាំព័ណ៌ (New Highlight)
+                  </span>
+                  <button 
+                    onClick={() => {
+                      setShowHighlightMenu(false);
+                      setSelectedText("");
+                      setSelectionCoords(null);
+                      window.getSelection()?.removeAllRanges();
+                    }}
+                    className="text-stone-400 hover:text-stone-600 dark:hover:text-stone-300 text-xs font-bold px-1"
+                  >
+                    បិទ
+                  </button>
+                </div>
+
+                {/* Color Palette Choice */}
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-bold text-stone-400 dark:text-stone-550">ពណ៌៖</span>
+                  <div className="flex items-center gap-1.5 flex-1">
+                    {(["yellow", "cyan", "emerald", "pink"] as const).map((color) => {
+                      const bgColors = {
+                        yellow: "bg-amber-400 ring-amber-400/30",
+                        cyan: "bg-sky-400 ring-sky-400/30",
+                        emerald: "bg-emerald-400 ring-emerald-400/30",
+                        pink: "bg-rose-400 ring-rose-400/30"
+                      };
+                      const isActive = highlightColor === color;
+                      return (
+                        <button
+                          key={color}
+                          onClick={() => setHighlightColor(color)}
+                          className={`w-6 h-6 rounded-full cursor-pointer transition-all duration-150 ${bgColors[color]} ${
+                            isActive ? "ring-4 ring-offset-2 dark:ring-offset-stone-900 scale-110" : "hover:scale-105"
+                          }`}
+                        />
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Personal Note Input */}
+                <div className="flex flex-col gap-1">
+                  <input
+                    type="text"
+                    placeholder="សរសេរចំណាំផ្ទាល់ខ្លួន... (ជម្រើស)"
+                    value={highlightNote}
+                    onChange={(e) => setHighlightNote(e.target.value)}
+                    className="w-full text-xs px-2.5 py-1.5 rounded-xl border border-stone-200 dark:border-stone-800 bg-stone-50 dark:bg-stone-950/40 text-stone-800 dark:text-stone-200 focus:outline-none focus:ring-1 focus:ring-amber-500/50"
+                  />
+                </div>
+
+                {/* Save button */}
+                <button
+                  onClick={handleSaveHighlight}
+                  className="w-full bg-amber-800 dark:bg-amber-700 hover:bg-amber-700 dark:hover:bg-amber-600 text-stone-100 font-bold text-xs py-2 rounded-xl transition flex items-center justify-center gap-1 cursor-pointer"
+                >
+                  <Highlighter className="w-3.5 h-3.5" />
+                  រក្សាទុកចំណាំ
+                </button>
+              </motion.div>
+            )}
           </AnimatePresence>
         </article>
           </motion.div>
@@ -2167,15 +2787,60 @@ export default function App() {
 
 
         {/* 4. LEARNING PROGRESS & NOTES TRACKER */}
-        {currentTab === "progress" && (
-          <motion.div
-            key="progress"
-            initial={{ opacity: 0, y: 15 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -15 }}
-            transition={{ duration: 0.35, ease: "easeInOut" }}
-            className="max-w-4xl mx-auto px-4 sm:px-6 py-10 space-y-10"
-          >
+        {currentTab === "progress" && (() => {
+          const chartData = chapters.map((ch) => {
+            const isCompleted = progress.completedChapters.includes(ch.id);
+            const chapterBookmarks = progress.bookmarks.includes(ch.id) ? 1 : 0;
+            const chapterHighlights = (progress.highlights || []).filter(h => h.chapterId === ch.id).length;
+
+            let readingProgress = isCompleted ? 100 : 0;
+            if (!isCompleted) {
+              readingProgress = Math.min(90, (chapterBookmarks * 30) + (chapterHighlights * 20));
+            }
+
+            const totalQuestions = ch.discussionQuestions.length;
+            const answeredQuestions = ch.discussionQuestions.filter(dq => progress.discussionAnswers[dq.id] !== undefined).length;
+            const discussionProgress = totalQuestions > 0 ? Math.round((answeredQuestions / totalQuestions) * 100) : 0;
+
+            return {
+              name: `ជំពូកទី ${ch.number}`,
+              title: ch.title,
+              "ការអាន (%)": readingProgress,
+              "សំណួរពិភាក្សា (%)": discussionProgress,
+            };
+          });
+
+          const quizScorePercent = progress.quizScores
+            ? Math.round((progress.quizScores.score / progress.quizScores.total) * 100)
+            : null;
+
+          const CustomTooltip = ({ active, payload, label }: any) => {
+            if (active && payload && payload.length) {
+              return (
+                <div className="bg-white dark:bg-stone-950 border border-stone-200 dark:border-stone-800 p-3.5 rounded-2xl shadow-xl space-y-1.5 text-left transition-colors duration-300">
+                  <p className="font-moul text-[11px] text-stone-900 dark:text-stone-100">{label}</p>
+                  {payload.map((entry: any, index: number) => (
+                    <div key={index} className="flex items-center gap-2 text-xs">
+                      <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: entry.color }} />
+                      <span className="text-stone-500 dark:text-stone-400 font-bold">{entry.name}:</span>
+                      <span className="font-mono font-extrabold text-stone-900 dark:text-stone-100">{entry.value}%</span>
+                    </div>
+                  ))}
+                </div>
+              );
+            }
+            return null;
+          };
+
+          return (
+            <motion.div
+              key="progress"
+              initial={{ opacity: 0, y: 15 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -15 }}
+              transition={{ duration: 0.35, ease: "easeInOut" }}
+              className="max-w-4xl mx-auto px-4 sm:px-6 py-10 space-y-10"
+            >
             
             {/* Page Header */}
             <div className="bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-800 rounded-3xl p-6 sm:p-8 flex flex-col sm:flex-row items-center justify-between gap-6 shadow-sm transition-colors duration-300">
@@ -2263,6 +2928,102 @@ export default function App() {
 
             </div>
 
+            {/* Learning Progress Visualizer Chart */}
+            <div className="bg-white dark:bg-stone-900 border border-stone-200/80 dark:border-stone-800 rounded-3xl p-6 sm:p-8 shadow-sm transition-colors duration-300 space-y-6">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div>
+                  <h3 className="font-extrabold text-stone-900 dark:text-stone-100 text-base flex items-center gap-2">
+                    <TrendingUp className="w-5.5 h-5.5 text-amber-800 dark:text-amber-400" />
+                    សូចនាករវឌ្ឍនភាពនៃការសិក្សា (Learning Progress Analytics)
+                  </h3>
+                  <p className="text-xs text-stone-500 dark:text-stone-400 mt-1 leading-relaxed font-medium">
+                    គំនូសតាងបង្ហាញពីកម្រិតនៃការអានសៀវភៅ និងការចូលរួមឆ្លើយសំណួរពិភាក្សាតាមជំពូកនីមួយៗ
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-4 text-xs font-bold self-start md:self-center bg-stone-50 dark:bg-stone-950 px-4 py-2 rounded-xl border border-stone-100 dark:border-stone-850">
+                  <span className="flex items-center gap-1.5 text-amber-800 dark:text-amber-400">
+                    <span className="w-2.5 h-2.5 rounded-full bg-amber-600" />
+                    ការអានសៀវភៅ (%)
+                  </span>
+                  <span className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400">
+                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
+                    សំណួរពិភាក្សា (%)
+                  </span>
+                  {quizScorePercent !== null && (
+                    <span className="flex items-center gap-1.5 text-rose-600 dark:text-rose-400">
+                      <span className="w-2.5 h-1 border-t-2 border-dashed border-rose-500" />
+                      ពិន្ទុតេស្ត ({quizScorePercent}%)
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* Chart container */}
+              <div className="h-80 w-full bg-stone-50/40 dark:bg-stone-950/20 p-4 rounded-2xl border border-stone-100 dark:border-stone-850">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart
+                    data={chartData}
+                    margin={{ top: 15, right: 25, left: -15, bottom: 5 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" stroke={theme === "dark" ? "#292524" : "#f1f0ee"} />
+                    <XAxis
+                      dataKey="name"
+                      stroke={theme === "dark" ? "#a8a29e" : "#57534e"}
+                      fontSize={11}
+                      fontWeight="bold"
+                      tickLine={false}
+                    />
+                    <YAxis
+                      stroke={theme === "dark" ? "#a8a29e" : "#57534e"}
+                      fontSize={11}
+                      fontWeight="bold"
+                      domain={[0, 100]}
+                      tickLine={false}
+                    />
+                    <Tooltip content={<CustomTooltip />} />
+                    
+                    {/* Reading progress line */}
+                    <Line
+                      type="monotone"
+                      dataKey="ការអាន (%)"
+                      stroke="#d97706"
+                      strokeWidth={3}
+                      activeDot={{ r: 6 }}
+                      dot={{ stroke: "#d97706", strokeWidth: 2, r: 4, fill: theme === "dark" ? "#1c1917" : "#fff" }}
+                    />
+                    
+                    {/* Discussion progress line */}
+                    <Line
+                      type="monotone"
+                      dataKey="សំណួរពិភាក្សា (%)"
+                      stroke="#10b981"
+                      strokeWidth={3}
+                      activeDot={{ r: 6 }}
+                      dot={{ stroke: "#10b981", strokeWidth: 2, r: 4, fill: theme === "dark" ? "#1c1917" : "#fff" }}
+                    />
+
+                    {/* Quiz score reference line if taken */}
+                    {quizScorePercent !== null && (
+                      <ReferenceLine
+                        y={quizScorePercent}
+                        stroke="#f43f5e"
+                        strokeDasharray="4 4"
+                        strokeWidth={2}
+                        label={{
+                          value: `លទ្ធផលតេស្ត៖ ${quizScorePercent}%`,
+                          position: "top",
+                          fill: "#f43f5e",
+                          fontSize: 10,
+                          fontWeight: "bold",
+                        }}
+                      />
+                    )}
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
             {/* Bookmarked Chapters List */}
             <div className="bg-white dark:bg-stone-900 border border-stone-200/80 dark:border-stone-800 rounded-3xl p-6 shadow-sm transition-colors duration-300">
               <h3 className="font-extrabold text-stone-900 dark:text-stone-100 text-base mb-4 flex items-center gap-2">
@@ -2292,6 +3053,90 @@ export default function App() {
                 </div>
               ) : (
                 <p className="text-xs text-stone-400 dark:text-stone-500 py-6 text-center">លោកអ្នកមិនទាន់មានទំព័រចំណាំណាមួយនៅឡើយទេ!</p>
+              )}
+            </div>
+
+            {/* Saved Highlights List */}
+            <div className="bg-white dark:bg-stone-900 border border-stone-200/80 dark:border-stone-800 rounded-3xl p-6 shadow-sm transition-colors duration-300">
+              <div className="flex items-center justify-between border-b border-stone-100 dark:border-stone-800 pb-3 mb-4">
+                <h3 className="font-extrabold text-stone-900 dark:text-stone-100 text-base flex items-center gap-2">
+                  <Highlighter className="w-5 h-5 text-amber-800 dark:text-amber-400" />
+                  ចំណាំព័ណ៌អត្ថបទដែលបានរក្សាទុក (Highlights) ({ (progress.highlights || []).length })
+                </h3>
+              </div>
+              
+              {progress.highlights && progress.highlights.length > 0 ? (
+                <div className="space-y-4">
+                  {progress.highlights.map((h) => {
+                    let cardColorClass = "bg-amber-50/50 dark:bg-amber-950/20 border-l-4 border-amber-400 text-amber-950 dark:text-amber-200";
+                    if (h.color === "cyan") {
+                      cardColorClass = "bg-sky-50/50 dark:bg-sky-950/20 border-l-4 border-sky-400 text-sky-950 dark:text-sky-200";
+                    } else if (h.color === "emerald") {
+                      cardColorClass = "bg-emerald-50/50 dark:bg-emerald-950/20 border-l-4 border-emerald-400 text-emerald-950 dark:text-emerald-200";
+                    } else if (h.color === "pink") {
+                      cardColorClass = "bg-rose-50/50 dark:bg-rose-950/20 border-l-4 border-rose-400 text-rose-950 dark:text-rose-200";
+                    }
+
+                    return (
+                      <div 
+                        key={h.id} 
+                        className={`p-4 rounded-2xl border border-stone-150 dark:border-stone-850/60 relative transition-all duration-300 ${cardColorClass}`}
+                      >
+                        {/* Header of Highlight Card */}
+                        <div className="flex justify-between items-start gap-4 mb-2 pb-1.5 border-b border-stone-200/20 dark:border-stone-800/20">
+                          <div>
+                            <span className="text-[10px] font-mono opacity-60">ជំពូកទី {h.chapterNumber}</span>
+                            <h4 className="font-extrabold text-xs opacity-90">{h.chapterTitle}</h4>
+                          </div>
+                          
+                          <div className="flex items-center gap-1 shrink-0">
+                            <button
+                              onClick={() => {
+                                setActiveChapterId(h.chapterId);
+                                setCurrentTab("chapters");
+                              }}
+                              className="text-[10px] font-bold bg-white/40 dark:bg-black/30 hover:bg-white/60 dark:hover:bg-black/50 px-2.5 py-1 rounded-lg transition-colors cursor-pointer"
+                              title="ទៅកាន់ជំពូកនេះ"
+                            >
+                              អានជំពូកនេះ
+                            </button>
+                            <button
+                              onClick={() => handleDeleteHighlight(h.id)}
+                              className="p-1 text-stone-400 hover:text-red-500 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition"
+                              title="លុបចំណាំព័ណ៌នេះ"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Highlighted Quote Content */}
+                        <p className="text-xs sm:text-sm font-medium leading-relaxed italic pr-2">
+                          "{h.text}"
+                        </p>
+
+                        {/* User Note if written */}
+                        {h.note && (
+                          <div className="mt-2.5 pt-2 border-t border-stone-200/20 dark:border-stone-800/30 text-xs flex gap-1.5 items-start">
+                            <span className="font-extrabold shrink-0 text-amber-900 dark:text-amber-300">✍️ កំណត់សម្គាល់៖</span>
+                            <span className="text-stone-750 dark:text-stone-250 font-semibold">{h.note}</span>
+                          </div>
+                        )}
+
+                        {/* Save Date */}
+                        <span className="absolute bottom-2.5 right-4 text-[9px] font-mono opacity-50">{h.date}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="text-center py-8 bg-stone-50/50 dark:bg-stone-950/40 rounded-2xl border border-dashed border-stone-200 dark:border-stone-800">
+                  <Highlighter className="w-8 h-8 text-stone-300 dark:text-stone-700 mx-auto mb-2.5" />
+                  <p className="text-xs text-stone-500 dark:text-stone-400 font-medium">លោកអ្នកមិនទាន់បានបង្កើតចំណាំព័ណ៌អត្ថបទណាមួយនៅឡើយទេ។</p>
+                  <p className="text-[10px] text-stone-400 dark:text-stone-550 mt-1 leading-normal max-w-sm mx-auto">
+                    សូមទៅកាន់ផ្នែកអានអត្ថបទ រួចធ្វើការជ្រើសរើស/លាបពណ៌ខ្មៅដៃ (select) លើប្រយោគណាមួយដើម្បីរក្សាទុកវាទីនេះ!
+                  </p>
+                </div>
               )}
             </div>
 
@@ -2333,8 +3178,144 @@ export default function App() {
                 <p className="text-xs text-stone-400 dark:text-stone-500 py-6 text-center">លោកអ្នកមិនទាន់បានកត់ត្រាចម្លើយសំនួរពិភាក្សាណាមួយនៅឡើយទេ!</p>
               )}
             </div>
-          </motion.div>
-        )}
+
+            {/* Interactive App Recommendations & Security Advisor Hub */}
+            <div className="bg-gradient-to-br from-amber-50 to-orange-50/50 dark:from-stone-900 dark:to-stone-950 border border-amber-200/50 dark:border-stone-800 rounded-3xl p-6 sm:p-8 shadow-md space-y-6 transition-colors duration-300">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-amber-200/60 dark:border-stone-800 pb-4">
+                <div>
+                  <h3 className="font-extrabold text-stone-900 dark:text-stone-100 text-base flex items-center gap-2">
+                    <Shield className="w-5.5 h-5.5 text-amber-800 dark:text-amber-400" />
+                    មជ្ឈមណ្ឌលណែនាំ និងប្រឹក្សាសុវត្ថិភាពទិន្នន័យ (Advisor & Backup Hub)
+                  </h3>
+                  <p className="text-xs text-stone-500 dark:text-stone-400 mt-1 leading-normal font-medium">
+                    គន្លឹះអនុសាសន៍ និងឧបករណ៍អន្តរកម្មដើម្បីរក្សាសុវត្ថិភាពទិន្នន័យ និងធ្វើឱ្យកម្មវិធីកាន់តែអស្ចារ្យ។
+                  </p>
+                </div>
+                
+                {/* Visual Status Indicator */}
+                <div className="flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/20 text-emerald-700 dark:text-emerald-400 px-3.5 py-1.5 rounded-full shrink-0 self-start sm:self-center">
+                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+                  <span className="text-xs font-extrabold uppercase tracking-wider">Local Database Secure</span>
+                </div>
+              </div>
+
+              {/* Grid: 1. Live Interactive Data Control Hub | 2. Future Development Strategic Hub */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                
+                {/* 1. Live Interactive Data Control Hub */}
+                <div className="bg-white dark:bg-stone-900/60 border border-stone-200/60 dark:border-stone-850 p-5 rounded-2xl space-y-4">
+                  <h4 className="font-extrabold text-xs text-stone-500 dark:text-stone-400 uppercase tracking-widest flex items-center gap-1.5 border-b border-stone-100 dark:border-stone-800/60 pb-2">
+                    <Database className="w-4 h-4 text-amber-700 dark:text-amber-500" />
+                    គ្រប់គ្រងទិន្នន័យសិក្សា (Interactive Data Controls)
+                  </h4>
+
+                  <div className="text-xs text-stone-600 dark:text-stone-300 space-y-2.5 leading-relaxed font-medium">
+                    <p>
+                      ទិន្នន័យរបស់លោកអ្នកដូចជា <strong className="text-stone-800 dark:text-stone-100">ចំណាំទំព័រអាន, គំនិតពិភាក្សា, និងចំណាំពណ៌ខ្មៅដៃ (Highlights)</strong> ត្រូវបានរក្សាទុកដោយសុវត្ថិភាពនៅក្នុង <span className="font-mono bg-stone-100 dark:bg-stone-950 px-1 py-0.5 rounded text-amber-700 dark:text-amber-400 text-[10px]">Browser LocalStorage</span>។
+                    </p>
+                    <p className="text-stone-500 dark:text-stone-400 text-[11px]">
+                      ⚠️ <strong>ចំណាំ៖</strong> ការសម្អាត History ឬ Cache របស់ Browser អាចធ្វើឱ្យបាត់បង់ទិន្នន័យទាំងនេះ។ សូមប្រើប្រាស់មុខងារខាងក្រោមដើម្បីបម្រុងទុក៖
+                    </p>
+                  </div>
+
+                  {/* Interactive Buttons */}
+                  <div className="pt-2 flex flex-col gap-2.5">
+                    
+                    {/* Export Button */}
+                    <button
+                      onClick={handleExportBackup}
+                      className="w-full bg-amber-800 hover:bg-amber-700 dark:bg-amber-700 dark:hover:bg-amber-600 text-stone-100 font-bold text-xs py-2.5 px-4 rounded-xl transition flex items-center justify-center gap-2 cursor-pointer"
+                    >
+                      <Download className="w-4 h-4" />
+                      ទាញយកទិន្នន័យបម្រុងទុក (Export Backup JSON)
+                    </button>
+
+                    {/* Import Button Interface */}
+                    <div className="relative">
+                      <input
+                        type="file"
+                        accept=".json"
+                        id="backup-upload-input"
+                        onChange={handleImportBackup}
+                        className="hidden"
+                      />
+                      <label
+                        htmlFor="backup-upload-input"
+                        className="w-full bg-stone-100 hover:bg-stone-200 dark:bg-stone-800 dark:hover:bg-stone-750 text-stone-700 dark:text-stone-200 border border-stone-200 dark:border-stone-700 font-bold text-xs py-2.5 px-4 rounded-xl transition flex items-center justify-center gap-2 cursor-pointer text-center"
+                      >
+                        <Upload className="w-4 h-4" />
+                        បញ្ចូលទិន្នន័យបម្រុងទុកវិញ (Import/Restore JSON)
+                      </label>
+                    </div>
+
+                    {/* Divider */}
+                    <div className="border-t border-stone-100 dark:border-stone-800/80 my-1" />
+
+                    {/* Clear/Reset button */}
+                    <button
+                      onClick={handleClearAllData}
+                      className="w-full bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/20 dark:hover:bg-rose-950/40 text-rose-700 dark:text-rose-400 border border-rose-200/60 dark:border-rose-900/40 font-bold text-xs py-2 rounded-xl transition flex items-center justify-center gap-2 cursor-pointer"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      លុបសម្អាតទិន្នន័យទាំងអស់ (Reset App Progress)
+                    </button>
+                  </div>
+                </div>
+
+                {/* 2. Future Development Strategic Hub */}
+                <div className="bg-white dark:bg-stone-900/60 border border-stone-200/60 dark:border-stone-850 p-5 rounded-2xl space-y-4">
+                  <h4 className="font-extrabold text-xs text-stone-500 dark:text-stone-400 uppercase tracking-widest flex items-center gap-1.5 border-b border-stone-100 dark:border-stone-800/60 pb-2">
+                    <Sparkles className="w-4 h-4 text-amber-700 dark:text-amber-500" />
+                    អនុសាសន៍អភិវឌ្ឍន៍ (Strategic App Roadmap)
+                  </h4>
+
+                  <div className="space-y-3.5">
+                    {/* Item 1 */}
+                    <div className="flex gap-3">
+                      <div className="bg-amber-100 dark:bg-amber-950/40 text-amber-800 dark:text-amber-400 p-2 rounded-lg shrink-0 h-8 w-8 flex items-center justify-center">
+                        <CheckCircle className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <h5 className="font-extrabold text-[11.5px] text-stone-900 dark:text-stone-100 leading-tight">1. សមាហរណកម្ម Cloud (Firebase Setup)</h5>
+                        <p className="text-[10.5px] text-stone-500 dark:text-stone-400 leading-normal mt-0.5">
+                          បំពាក់ <strong>Firebase Authentication & Firestore</strong> ដើម្បីបង្កើតគណនី និងរក្សាទុកទិន្នន័យរបស់អ្នកសិក្សាលើ Cloud អាចអានឆ្លងឧបករណ៍ដោយមិនបារម្ភបាត់បង់ទិន្នន័យ។
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Item 2 */}
+                    <div className="flex gap-3">
+                      <div className="bg-amber-100 dark:bg-amber-950/40 text-amber-800 dark:text-amber-400 p-2 rounded-lg shrink-0 h-8 w-8 flex items-center justify-center">
+                        <CheckCircle className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <h5 className="font-extrabold text-[11.5px] text-stone-900 dark:text-stone-100 leading-tight">2. បំពាក់មុខងារសំលេងអាន (Khmer TTS Integration)</h5>
+                        <p className="text-[10.5px] text-stone-500 dark:text-stone-400 leading-normal mt-0.5">
+                          បញ្ចូលប្រព័ន្ធសំលេងនិយាយ (Text-to-Speech) ដើម្បីឱ្យប្រព័ន្ធអានសៀវភៅឱ្យស្តាប់ដោយស្វ័យប្រវត្តិ សម្រួលដល់ការសិក្សារបស់អ្នកមានបញ្ហាចក្ខុវិស័យ។
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Item 3 */}
+                    <div className="flex gap-3">
+                      <div className="bg-amber-100 dark:bg-amber-950/40 text-amber-800 dark:text-amber-400 p-2 rounded-lg shrink-0 h-8 w-8 flex items-center justify-center">
+                        <CheckCircle className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <h5 className="font-extrabold text-[11.5px] text-stone-900 dark:text-stone-100 leading-tight">3. ជំនួយការឆ្លាតវៃ (Gemini AI Study Coach)</h5>
+                        <p className="text-[10.5px] text-stone-500 dark:text-stone-400 leading-normal mt-0.5">
+                          ប្រើប្រាស់ <strong>Gemini API</strong> ដើម្បីបង្កើតជំនួយការសាកសួរផ្ទាល់ខ្លួន ដែលអាចបកស្រាយ វិភាគ និងផ្តល់យោបល់លើគ្រប់ចំណុចសៀវភៅទាំងមូលបានភ្លាមៗ។
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+              </div>
+            </div>
+            </motion.div>
+          );
+        })()}
 
         </AnimatePresence>
       </main>
@@ -2352,6 +3333,201 @@ export default function App() {
           </div>
         </div>
       </footer>
+
+      {/* 5. FLOATING AI COACH & AUDIO TRANSCRIPTION HUB */}
+      {/* Floating Trigger Bubble */}
+      <div className="fixed bottom-24 md:bottom-8 right-6 z-45">
+        <motion.button
+          onClick={() => setChatOpen(true)}
+          whileHover={{ scale: 1.08 }}
+          whileTap={{ scale: 0.94 }}
+          className="bg-gradient-to-tr from-amber-700 to-amber-500 hover:from-amber-800 hover:to-amber-600 text-white p-4 rounded-full shadow-[0_8px_30px_rgb(217,119,6,0.3)] border-2 border-white dark:border-stone-900 cursor-pointer flex items-center justify-center gap-2 group transition-all duration-300 relative"
+        >
+          <span className="absolute -top-1 -right-1 flex h-3 w-3">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+            <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
+          </span>
+          <Bot className="w-6 h-6 animate-pulse" />
+          <span className="max-w-0 overflow-hidden group-hover:max-w-xs transition-all duration-500 ease-out text-xs font-bold font-sans whitespace-nowrap hidden md:inline">
+            សួរគ្រូបង្វឹក AI
+          </span>
+        </motion.button>
+      </div>
+
+      {/* Chat sliding drawer container */}
+      <AnimatePresence>
+        {chatOpen && (
+          <>
+            {/* Backdrop filter overlay */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setChatOpen(false)}
+              className="fixed inset-0 bg-stone-950/40 backdrop-blur-xs z-50 transition-colors duration-300"
+            />
+
+            {/* Sliding Drawer Panel */}
+            <motion.div
+              initial={{ x: "100%" }}
+              animate={{ x: 0 }}
+              exit={{ x: "100%" }}
+              transition={{ type: "spring", damping: 25, stiffness: 220 }}
+              className="fixed inset-y-0 right-0 w-full sm:max-w-md bg-white dark:bg-stone-900 border-l border-stone-200 dark:border-stone-800 shadow-[0_0_50px_rgba(0,0,0,0.15)] z-50 flex flex-col transition-colors duration-300"
+            >
+              {/* Drawer Header */}
+              <div className="p-4 sm:p-5 border-b border-stone-100 dark:border-stone-800 flex items-center justify-between bg-amber-50/50 dark:bg-amber-950/10">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 bg-amber-600 text-white rounded-xl shadow-md flex items-center justify-center">
+                    <Bot className="w-5.5 h-5.5" />
+                  </div>
+                  <div>
+                    <h3 className="font-moul text-[11px] text-amber-950 dark:text-amber-100 flex items-center gap-1.5 leading-none">
+                      គ្រូបង្វឹកដឹកនាំ AI
+                    </h3>
+                    <div className="flex items-center gap-1.5 mt-1.5">
+                      <span className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
+                      <span className="text-[10px] text-stone-500 dark:text-stone-400 font-bold">ជំនួយការសិក្សាឆ្លាតវៃ • ត្រៀមខ្លួនជាស្រេច</span>
+                    </div>
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => setChatOpen(false)}
+                  className="p-1.5 rounded-lg text-stone-400 hover:text-stone-700 dark:hover:text-stone-200 hover:bg-stone-100 dark:hover:bg-stone-800 transition-all cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Chat Thread Messages Area */}
+              <div className="flex-1 overflow-y-auto p-4 space-y-4 scrollbar-thin">
+                {chatMessages.map((msg, idx) => (
+                  <div
+                    key={idx}
+                    className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
+                  >
+                    <div className="max-w-[85%] flex flex-col gap-1">
+                      {/* Avatar/Sender name if AI */}
+                      {msg.role === "model" && (
+                        <span className="text-[10px] text-stone-400 dark:text-stone-500 font-extrabold ml-1 uppercase tracking-wider flex items-center gap-1">
+                          <Bot className="w-3 h-3 text-amber-700 dark:text-amber-400" />
+                          AI Coach
+                        </span>
+                      )}
+
+                      {/* Bubble content */}
+                      <div
+                        className={`p-3.5 rounded-2xl shadow-xs transition-colors duration-200 ${
+                          msg.role === "user"
+                            ? "bg-amber-700 text-white rounded-tr-none font-medium"
+                            : "bg-stone-50 dark:bg-stone-850 border border-stone-150 dark:border-stone-800 text-stone-800 dark:text-stone-200 rounded-tl-none"
+                        }`}
+                      >
+                        <div className="space-y-1.5 select-text">
+                          {msg.role === "model" ? formatMessageText(msg.text) : <p className="text-[13px] leading-relaxed">{msg.text}</p>}
+                        </div>
+                      </div>
+
+                      {/* Time text */}
+                      <span className={`text-[9px] text-stone-400 dark:text-stone-500 font-mono font-bold mt-0.5 px-1 ${msg.role === "user" ? "text-right" : "text-left"}`}>
+                        {msg.timestamp}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+
+                {/* Thinking / Transcription Indicators */}
+                {transcribing && (
+                  <div className="flex justify-start">
+                    <div className="max-w-[80%] flex items-center gap-2 bg-stone-50 dark:bg-stone-850 border border-stone-100 dark:border-stone-800 px-4 py-2.5 rounded-2xl rounded-tl-none text-stone-500 dark:text-stone-400 text-xs font-bold animate-pulse">
+                      <Mic className="w-4 h-4 text-rose-500 animate-bounce" />
+                      កំពុងបម្លែងសំឡេងទៅជាអក្សរ...
+                    </div>
+                  </div>
+                )}
+
+                {chatLoading && (
+                  <div className="flex justify-start">
+                    <div className="max-w-[80%] flex items-center gap-2 bg-stone-50 dark:bg-stone-850 border border-stone-100 dark:border-stone-800 px-4 py-2.5 rounded-2xl rounded-tl-none text-stone-500 dark:text-stone-400 text-xs font-bold animate-pulse">
+                      <Bot className="w-4 h-4 text-amber-600 animate-spin" />
+                      កំពុងពិចារណាឆ្លើយ...
+                    </div>
+                  </div>
+                )}
+
+                <div ref={chatEndRef} />
+              </div>
+
+              {/* Quick Prompts/Suggestions section */}
+              <div className="p-3 border-t border-stone-100 dark:border-stone-800 bg-stone-50/50 dark:bg-stone-950/20">
+                <span className="text-[9px] text-stone-400 dark:text-stone-500 font-black block uppercase tracking-wider mb-2 px-1">
+                  សំណួរណែនាំ (Quick Suggestions)
+                </span>
+                <div className="flex flex-wrap gap-1.5">
+                  {[
+                    "សង្ខេបជំពូកទី ១",
+                    "តើការផ្ទេរសិទ្ធិជាអ្វី?",
+                    "របៀបលើកទឹកចិត្តបុគ្គលិក",
+                    "សួរចម្លើយខ្ញុំពីមេរៀន"
+                  ].map((promptText, pIdx) => (
+                    <button
+                      key={pIdx}
+                      onClick={() => {
+                        setChatInput(promptText);
+                      }}
+                      className="text-[10px] font-bold text-stone-600 dark:text-stone-400 hover:text-amber-800 dark:hover:text-amber-300 bg-white dark:bg-stone-800 border border-stone-200 dark:border-stone-750 px-2.5 py-1.5 rounded-lg shadow-2xs hover:border-amber-400 dark:hover:border-amber-800 transition-all cursor-pointer whitespace-nowrap"
+                    >
+                      {promptText}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Footer Input Controls */}
+              <div className="p-4 border-t border-stone-100 dark:border-stone-800 flex items-center gap-2">
+                {/* Voice input button */}
+                <button
+                  onClick={isRecording ? stopRecording : startRecording}
+                  className={`p-3 rounded-xl border transition-all flex items-center justify-center shrink-0 cursor-pointer ${
+                    isRecording
+                      ? "bg-rose-500 hover:bg-rose-600 text-white border-rose-500 animate-pulse shadow-[0_0_15px_rgba(244,63,94,0.4)]"
+                      : "bg-stone-50 dark:bg-stone-850 hover:bg-stone-100 dark:hover:bg-stone-800 text-stone-600 dark:text-stone-400 border-stone-200 dark:border-stone-750"
+                  }`}
+                  title={isRecording ? "ចុចដើម្បីបញ្ឈប់ និងបម្លែងជាអក្សរ" : "ចុចដើម្បីនិយាយជាសំឡេង"}
+                >
+                  <Mic className="w-5 h-5" />
+                </button>
+
+                {/* Input text box */}
+                <input
+                  type="text"
+                  value={chatInput}
+                  onChange={(e) => setChatInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      handleSendChatMessage();
+                    }
+                  }}
+                  placeholder={isRecording ? "កំពុងស្តាប់សំឡេងលោកអ្នក..." : "សួរសំណួររបស់អ្នកនៅទីនេះ..."}
+                  disabled={isRecording || chatLoading}
+                  className="flex-1 px-4 py-2.5 rounded-xl border border-stone-200 dark:border-stone-750 bg-stone-50 dark:bg-stone-850 focus:bg-white dark:focus:bg-stone-900 text-stone-800 dark:text-stone-100 text-sm placeholder-stone-400 focus:outline-hidden focus:ring-2 focus:ring-amber-500/30 focus:border-amber-600 transition-all disabled:opacity-50"
+                />
+
+                {/* Submit button */}
+                <button
+                  onClick={handleSendChatMessage}
+                  disabled={!chatInput.trim() || chatLoading || isRecording}
+                  className="p-3 rounded-xl bg-amber-700 hover:bg-amber-800 disabled:opacity-40 text-white shadow-md shadow-amber-750/10 cursor-pointer transition-all flex items-center justify-center shrink-0"
+                >
+                  <Send className="w-5.5 h-5.5" />
+                </button>
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
 
       {/* Mobile Bottom Floating Navigation Dock */}
       <div className="md:hidden fixed bottom-6 left-0 right-0 z-50 flex justify-center px-4">

@@ -47,4 +47,16 @@ export interface UserProgress {
     completed: boolean;
   } | null;
   bookmarks: string[];
+  highlights?: Highlight[];
+}
+
+export interface Highlight {
+  id: string;
+  chapterId: string;
+  chapterTitle: string;
+  chapterNumber: number;
+  text: string;
+  note?: string;
+  color?: string; // e.g., 'yellow' | 'cyan' | 'emerald' | 'pink'
+  date: string;
 }

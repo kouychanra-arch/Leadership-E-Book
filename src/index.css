@@ -1,0 +1,61 @@
+@import url('https://fonts.googleapis.com/css2?family=Battambang:wght@400;700;900&family=Moul&family=Kantumruy+Pro:ital,wght@0,300..700;1,300..700&family=JetBrains+Mono:wght@400;500;700&family=Suwannaphum:wght@400;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Kantumruy Pro", "Battambang", "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Kantumruy Pro", sans-serif;
+  --font-moul: "Moul", serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+/* 
+  Global Khmer Typography Optimization Rules
+  Khmer scripts contain intricate upper-vowels and lower-subscripts (ជើងអក្សរ).
+  They require slightly more line-height (leading) and letter-spacing (tracking) 
+  to be perfectly legible and prevent clipping or overlapping characters in browsers.
+*/
+body {
+  font-family: "Kantumruy Pro", "Battambang", "Inter", sans-serif;
+  line-height: 1.8;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Heading line-height adjust to avoid clipping of upper vowels and sub-scripts */
+h1, h2, h3, h4, h5, h6, .font-moul, .font-display {
+  line-height: 1.6 !important;
+  letter-spacing: 0.01em;
+}
+
+/* Ensure paragraph, list, and generic text elements have clean spacing and high readability */
+p, li, span, button, input, textarea, label {
+  line-height: 1.8;
+  letter-spacing: 0.015em;
+}
+
+/* Better Khmer line-breaking behavior */
+p, h1, h2, h3, h4, h5, h6, li, span {
+  word-break: keep-all;
+  overflow-wrap: break-word;
+}
+
+/* Custom premium ambient grid pattern with radial gradient mask for smooth edges */
+.bg-grid-pattern {
+  background-image: radial-gradient(rgba(14, 165, 233, 0.05) 1.5px, transparent 1.5px);
+  background-size: 24px 24px;
+  mask-image: radial-gradient(circle at center, black 30%, transparent 80%);
+  -webkit-mask-image: radial-gradient(circle at center, black 30%, transparent 80%);
+}
+.dark .bg-grid-pattern {
+  background-image: radial-gradient(rgba(56, 189, 248, 0.04) 1.5px, transparent 1.5px);
+  background-size: 24px 24px;
+}
+
+/* Premium micro-grain noise texture to give an organic, high-fidelity physical look */
+.bg-noise-overlay {
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.015'/%3E%3C/svg%3E");
+}
+.dark .bg-noise-overlay {
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.025'/%3E%3C/svg%3E");
+}
+

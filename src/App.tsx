@@ -1393,7 +1393,7 @@ export default function App() {
                     </div>
                     <div className="text-left">
                       <h4 className="font-bold text-stone-900 dark:text-stone-200 text-xs sm:text-sm leading-none">គួយ ចាន់រ៉ា</h4>
-                      <p className="text-[10px] text-stone-400 dark:text-stone-500 mt-1 leading-none">អ្នករៀបរៀង និងអ្នកឯកទេសគ្រប់គ្រងធនធានមនុស្ស</p>
+                      <p className="text-[10px] text-stone-400 dark:text-stone-500 mt-1 leading-none">នាយកសាលារៀនសុវណ្ណភូមិ (ទីតាំងទួលពង្រ)</p>
                     </div>
                   </div>
                   <span className="text-[10px] text-stone-400 dark:text-stone-500 font-mono italic">រក្សាសិទ្ធិគ្រប់យ៉ាង © ២០២៦</span>
